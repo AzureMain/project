@@ -130,13 +130,12 @@ void getfilefromcatalog(int filenumber,char filetosend[]){
     filenumber++;
     int count = 0;
     char line[512]; /* or other suitable maximum line size */
-    char filename[256];
     while (fgets(line, sizeof line, f) != NULL){
       if (count == filenumber){
         char* settonull = strchr(line, ',');
         *settonull = '\0';
         //use line or in a function return it
-        strcpy(filetosend, filename);
+        strcpy(filetosend, line);
         fclose(f);
         return;
         //in case of a return first close the file with "fclose(file);"
@@ -223,20 +222,70 @@ int main(int argc, char *argv[]){
   if (n < 0) error("ERROR writing to socket");
 
   // Send the file the catalog
-  off_t offset = 0;
-  int bytes_to_send = file_stat.st_size;
-  int bytes_left = bytes_to_send;
-  int bytes_sent;
+  //int bytes_to_send = file_stat.st_size;
+  int bytes_sent, nbytes;
+  char file_data[blocksize];
+  memset(file_data, '\0', blocksize);
+  int total = 0;
   /* Sending file data */
+  while ((nbytes = fread(file_data, sizeof(char), blocksize, fd)) > 0){
+    while ((bytes_sent = send(newsockfd, file_data, nbytes, 0)) > 0 || (bytes_sent == -1 && errno == EINTR) ) {
+      if (bytes_sent > 0) {
+        nbytes -= bytes_sent;
+        total += bytes_sent;
+      }
+    }
+    printf("catalog of size %d sent\n", total);
 
-  while (((bytes_sent = sendfile(newsockfd, fileno(fd), &offset, blocksize)) > 0) && (bytes_left > 0)){
-    bytes_left -= bytes_sent;
-    fprintf(stdout, "Server sent %d bytes from file's data, offset is now : %li and remaining data = %d\n", bytes_sent, offset, bytes_left);
   }
-  
+  fclose(fd);
+
+
+
   while(1){
-    n = recv(newsockfd, buffer, 255, 0);
-    printf("From client: %s", buffer);
+    bzero(buffer, 256);
+    n = read(newsockfd, buffer, 256);
+    int fileid = atoi(buffer);
+    char filename[256];
+    char *dir = configstruct->dir;
+    char both[sizeof(filename) + sizeof(dir)];
+    getfilefromcatalog(fileid, filename);
+    printf("DIR: %s\n", dir);
+    sprintf(both, "%s/%s", dir, filename);
+    printf("Downloading file %s\n", both);
+
+    FILE *fd = fopen(both, "rb");
+    if (fd == NULL){
+      fprintf(stderr, "Error opening file: %s\n", strerror(errno));
+      exit(1);
+    }
+    // Get file size
+    if (fstat(fileno(fd), &file_stat) < 0){
+      fprintf(stderr, "Error getting file stats: %s", strerror(errno));
+      exit(1);
+    }
+    // Send the client the filesize
+    char fsize[32];
+    sprintf(fsize, "%lu", file_stat.st_size);
+    n = write(newsockfd, fsize, sizeof(fsize));
+    if (n < 0) error("ERROR writing to socket");
+
+    // Send the file the catalog
+    //int bytes_to_send = file_stat.st_size;
+    int bytes_sent, nbytes;
+    char file_data[blocksize];
+    int offset = 0;
+
+    /* Sending file data */
+    while ((nbytes = fread(file_data, sizeof(char), blocksize, fd)) > 0){
+      while ((bytes_sent = send(newsockfd, file_data, nbytes, 0)) > 0 || (bytes_sent == -1 && errno == EINTR) ) {
+        if (bytes_sent > 0) {
+          offset += bytes_sent;
+          nbytes -= bytes_sent;
+        }
+      }
+    }
+    fclose(fd);
   }
 
 

@@ -8,5 +8,6 @@ client: client.c md5sum.c
 clean:
 	rm -f *.o \
 	client \
+	images/* \
 	catalog.csv \
 	download.html

@@ -135,18 +135,20 @@ struct catalog get_catalog_name(char *filename)
 void getfilefromcatalog(int filenumber, char filetosend[]){
 	FILE *f = fopen("catalog.csv", "r");
 	if ( f != NULL ){
-		filenumber++;
+		int i = filenumber;
 		int count = 0;
 		char line[512]; /* or other suitable maximum line size */
-		char filename[256];
 		while (fgets(line, sizeof line, f) != NULL){
-			if (count == filenumber){
+			if (count == i){
 				char* settonull = strchr(line, ',');
+
 				*settonull = '\0';
 
 				//use line or in a function return it
-				strcpy(filetosend, filename);
+				strcpy(filetosend, line);
+
 				fclose(f);
+
 				return;
 				//in case of a return first close the file with "fclose(file);"
 			}
@@ -264,37 +266,36 @@ int main(int argc, char *argv[])
 		// Incoming file of size x
 		n = read(sockfd,buffer,256);
 		int incomingfilesize = atoi(buffer);
-		int bytes_read = 0;
 		FILE *fp;
 		fp = fopen("catalog.csv", "wb");
 		if(fp == NULL){
-			printf("Error opening file");
+			fprintf(stderr, "Error opening file: %s\n", strerror(errno));
 			return 1;
 		}
 		// Receive catalog
 		char vsb[blocksize];
-		bzero(vsb, blocksize);
-		do {
-			bytes_read = recv(sockfd, vsb, blocksize, 0);
-			printf("Read %d bytes\n", bytes_read);
-			if (bytes_read == -1) {
-				perror("read");
-				exit(1);
-			}
-			if (write(fileno(fp), vsb, bytes_read) == -1) {
-				perror("write");
-				exit(1);
-			}
-		} while (bytes_read > 0);
-
-		close(sockfd);
+		memset(vsb, '\0', blocksize);
+		int bytesRead = 0;
+		int result;
+		while (bytesRead < incomingfilesize)
+		{
+			int read_result = read(sockfd, vsb, blocksize);
+			if (result < 1 )
+			{ exit(1); }
+			result = fwrite(vsb, 1, blocksize, fp);
+			if (result < 1 )
+			{ exit(1); }
+			bytesRead += read_result;
+		}
+		printf("downloading catalog.csv @ %d bytes\n", bytesRead);
 		fclose(fp);
-
-
-		struct catalog catalogstruct;
-		catalogstruct = get_catalog_name("catalog.csv");
+		memset(vsb, '\0', blocksize);
 		while(1){
-
+			memset(buffer, '\0', 256);
+			// Send selection to server
+			char buffer[256];
+			struct catalog catalogstruct;
+			catalogstruct = get_catalog_name("catalog.csv");
 			printf("===============================\n");
 			printf("Connecting server at %s, port %s\n", configstruct->server_ip, configstruct->port);
 			printf("Chunk size is %s bytes. No image type found.\n", configstruct->chunk_size);
@@ -303,16 +304,57 @@ int main(int argc, char *argv[])
 				printf("[%d]%s\n", i+1, catalogstruct.filelogs[i]);
 			}
 			printf("===============================\n");
-			printf("Please select a file (0 will exit):");
-			char selection[256];
-			bzero(buffer, 256);
-			scanf("%s", selection);
-			snprintf(buffer, 256, "%s", selection);
-			n = send(sockfd, selection, strlen(selection), 0);
-			if (n < 0)
-			error("ERROR writing from socket");
-			sleep(1);
+			int selection = -1;
+			while(selection == -1 || selection > catalogstruct.index){
+				if(selection > catalogstruct.index){
+					printf("File must be in the range 1 to %d.\n", catalogstruct.index);
+				}
+				printf("Please select a file (0 will exit):");
+				scanf("%s", buffer);
+				selection = atoi(buffer);
+				if(selection == 0){
+					return 0;
+				}
+				n = write(sockfd, buffer, 256);
+			}
+
+			// Collect file from server
+			memset(buffer, '\0', 256);
+			// Incoming file of size x
+			n = read(sockfd,buffer,256);
+			int incomingfilesize = atoi(buffer);
+			char filename[256];
+			char fileanddir[264];
+
+			getfilefromcatalog(selection, filename);
+			sprintf(fileanddir, "images/%s", filename);
+			printf("FNAME: %s\n",fileanddir);
+			FILE *fp;
+			fp = fopen(fileanddir, "wb");
+			if(fp == NULL){
+				fprintf(stderr, "Error opening file: %s\n", strerror(errno));
+				return 1;
+			}
+			// Receive catalog
+			char vsb[blocksize];
+			int bytesRead = 0;
+			int result;
+			printf("IMAGE SIZE %d\n", incomingfilesize);
+			while (bytesRead < incomingfilesize)
+			{
+				memset(vsb, '\0', blocksize);
+				result = read(sockfd, vsb, blocksize);
+				if (result < 1 )
+				{ exit(1); }
+				result = fwrite(vsb, 1, blocksize, fp);
+				if (result < 1 )
+				{ exit(1); }
+				bytesRead += result;
+			}
 		}
+		memset(vsb, '\0', blocksize);
+		close(sockfd);
+		fclose(fp);
 	}
 	return 0;
 }
